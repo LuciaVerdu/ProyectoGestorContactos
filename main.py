@@ -1,24 +1,21 @@
+# Aca importamos la libreria para usar SQLite.
 import sqlite3
+# Importamos diferentes tipos de anotaciones.
 from typing import List, Tuple, Optional
 
-# ============================================================
-# Configuración de la base de datos
-# ============================================================
-DB_NAME = "contactos.db"  # Nombre del archivo SQLite (se crea si no existe)
+# |||| Configuración de la base de datos ||||
 
-# ------------------------------------------------------------
-# crear_tabla_contactos
-# Crea la tabla 'contactos' si no existe. Se intenta además
-# crear un índice único para impedir duplicados EXACTOS.
-# NOTA: si ya hay duplicados en la BD, la creación del índice
-# puede fallar; por eso se hace un try/except para no romper
-# la app. La app igualmente valida duplicados antes de insertar.
-# ------------------------------------------------------------
+# Instanciamos la BBDD.
+DB_NAME = "contactos.db"
+
+# Crear la tabla de contactos.
 def crear_tabla_contactos():
+    # Inicia la conexión a la BBDD.
     conn = sqlite3.connect(DB_NAME)
+    # Crea un cursor para ejecutar sentencias SQL.
     cur = conn.cursor()
 
-    # Estructura base de la tabla
+    # Ejecuta SQL para crear la tabla contactos si no existe.
     cur.execute("""
         CREATE TABLE IF NOT EXISTS contactos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,89 +26,81 @@ def crear_tabla_contactos():
         );
     """)
 
-    # Índice único para impedir duplicados EXACTOS (nombre+apellido+telefono+email)
-    # Si ya existen duplicados, esta creación puede fallar: lo toleramos.
+    # Aca instanciamos un indice que vamos a utilizar para que no haya duplicados.
     try:
         cur.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_contacto_unique
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_contacto_unico
             ON contactos(nombre, apellido, telefono, email);
         """)
     except Exception:
-        # No detenemos la app; igual validamos duplicados a nivel aplicación.
+        # Esto sirve en el caso si llega a fallar, no se rompa la app.
         pass
 
+    # Confirma todos los cambios en la BBDD.
     conn.commit()
+    # Cierra la conexión con la BBDD.
     conn.close()
 
+# |||| POO ||||
 
-# ============================================================
-# Modelo (POO simple)
-# ============================================================
+# Definimos la clase contacto.
 class Contacto:
-    """
-    Representa un contacto en memoria. Mantengo esta clase por
-    compatibilidad con el enfoque original (POO simple), aunque
-    la inserción/actualización la haga el repositorio.
-    """
+    # Las validaciones lo hace en la interfaz.
     def __init__(self, nombre: str, apellido: str = "", telefono: str = "", email: str = ""):
+        # Asignamos el nombre.
         self.nombre = nombre
+        # Asignamos el apellido.
         self.apellido = apellido
+        # Asignamos el telefono.
         self.telefono = telefono
+        # Asignamos el mail.
         self.email = email
 
     def __str__(self):
-        # Representación amigable (útil para logs/debug)
+        # Devuelve un string que muestra nombre, apellido, teléfono y email.
         return f"{self.nombre} {self.apellido} | Tel: {self.telefono} | Email: {self.email}"
 
+# |||| Repositorio, CRUD y Validaciones ||||
 
-# ============================================================
-# Repositorio / DAO (acceso a datos)
-# Mantiene los mismos nombres para las operaciones CRUD:
-#   - agregar_contacto
-#   - obtener_todos_los_contactos
-#   - eliminar_contacto
-#   - actualizar_contacto
-# Agregamos validaciones y chequeos de duplicados aquí.
-# ============================================================
+# Instanciamos la clase que habla con la BBDD.
 class GestorDeContactos:
+    # Definimos la ruta de la BBDD.
     def __init__(self, db_path: str = DB_NAME):
-        # Abrimos una conexión simple a SQLite.
-        # En apps Tkinter de escritorio suele ser suficiente.
+        # Abre la conexión.
         self.conn = sqlite3.connect(db_path)
+        # Crea el cursor para ejecutar SQL.
         self.cur = self.conn.cursor()
 
-    # ---------------------------
-    # Validaciones de negocio
-    # ---------------------------
+    # Valida el limite de caracteres de los campos.
     @staticmethod
     def _validar_longitudes(nombre: str, apellido: str, telefono: str, email: str):
-        """
-        Limita los tamaños para evitar datos extra largos.
-        Ajustá estos límites si tu consigna lo requiere.
-        """
+        # Si el nombre supera 50 caracteres, error.
         if len(nombre) > 50:
             raise ValueError("El nombre supera el máximo de 50 caracteres.")
+        # Si el apellido supera 50 caracteres, error.
         if len(apellido) > 50:
             raise ValueError("El apellido supera el máximo de 50 caracteres.")
+        # Si el teléfono supera 15 caracteres, error.
         if len(telefono) > 15:
             raise ValueError("El teléfono supera el máximo de 15 caracteres.")
+        # Si el email supera 100 caracteres, error.
         if len(email) > 100:
             raise ValueError("El email supera el máximo de 100 caracteres.")
 
+    # Valida campos obligatorios y formats.
     @staticmethod
     def _validar_campos_obligatorios_y_formato(nombre: str, telefono: str, email: str):
-        """
-        - Nombre es obligatorio.
-        - Teléfono: si se completa, solo números (isDigit).
-        - Email: si se completa, debe contener '@'.
-        """
+        # Verifica que el nombre no este vacio.
         if not nombre.strip():
             raise ValueError("El nombre es obligatorio.")
+        # Campo teléfono solo usa numeros.
         if telefono and not telefono.isdigit():
             raise ValueError("El teléfono debe contener solo números.")
+        # Campo mail debe tener el @.
         if email and "@" not in email:
             raise ValueError("El email debe contener '@'.")
 
+    # Valida que no se dupliquen los datos.
     def _existe_duplicado(
         self,
         nombre: str,
@@ -120,27 +109,24 @@ class GestorDeContactos:
         email: str,
         excluir_id: Optional[int] = None
     ) -> Tuple[bool, str]:
-        """
-        Reglas de duplicidad (simples y claras):
-        - Duplicado EXACTO: (nombre, apellido, telefono, email) idénticos.
-        - Duplicado por email: si 'email' no está vacío y ya existe en otro registro.
-        - Duplicado por teléfono: si 'telefono' no está vacío y ya existe en otro registro.
-        """
-        # 1) Duplicado exacto
+        # Estos son los parametros a consultar.
         params = [nombre, apellido, telefono, email]
+        # Con SQL buscamos si hay coincidencias.
         sql = (
             "SELECT id FROM contactos "
             "WHERE nombre = ? AND apellido = ? AND telefono = ? AND email = ?"
         )
+        # Esto es para que cuando actualicemos no tenga en cuenta el ID ya que se mantiene.
         if excluir_id is not None:
             sql += " AND id <> ?"
             params.append(excluir_id)
 
+        # Lo ejecuta, si hay un resultado es porque es un duplicado exacto.
         rows = self.cur.execute(sql, params).fetchall()
         if rows:
             return True, "Existe un contacto con exactamente los mismos datos."
 
-        # 2) Mismo email (si no está vacío)
+        # Verifica que el mail no este duplicado.
         if email.strip():
             params_email = [email]
             sql_email = "SELECT id FROM contactos WHERE email = ?"
@@ -151,7 +137,7 @@ class GestorDeContactos:
             if rows:
                 return True, "Ya existe un contacto con el mismo email."
 
-        # 3) Mismo teléfono (si no está vacío)
+        # Verifica que el telefono no este duplicado.
         if telefono.strip():
             params_tel = [telefono]
             sql_tel = "SELECT id FROM contactos WHERE telefono = ?"
@@ -161,54 +147,50 @@ class GestorDeContactos:
             rows = self.cur.execute(sql_tel, params_tel).fetchall()
             if rows:
                 return True, "Ya existe un contacto con el mismo teléfono."
-
         return False, ""
 
-    # ---------------------------
-    # CRUD
-    # ---------------------------
+    # Agrega un contaco y nos devuelve un ID.
     def agregar_contacto(self, contacto: Contacto) -> int:
-        """
-        Inserta un contacto en la base.
-        Mantengo la firma usando un objeto Contacto (estilo original).
-        """
-        # Validaciones previas
+        # Valida longitudes.
         self._validar_longitudes(contacto.nombre, contacto.apellido, contacto.telefono, contacto.email)
+        # Valida campos.
         self._validar_campos_obligatorios_y_formato(contacto.nombre, contacto.telefono, contacto.email)
 
-        # Chequeo de duplicados
+        # Verifica que no sea duplicado.
         dup, motivo = self._existe_duplicado(contacto.nombre, contacto.apellido, contacto.telefono, contacto.email)
         if dup:
             raise ValueError(motivo)
-
-        # Insert simple
         self.cur.execute(
             "INSERT INTO contactos(nombre, apellido, telefono, email) VALUES(?, ?, ?, ?)",
             (contacto.nombre.strip(), contacto.apellido.strip(), contacto.telefono.strip(), contacto.email.strip())
         )
         self.conn.commit()
+        # Devuelve el ID.
         return self.cur.lastrowid
 
+    # Obtiene todos los contactos, ordenados por ID del mas nuevo al mas viejo.
     def obtener_todos_los_contactos(self) -> List[Tuple]:
-        # Devuelve lista de tuplas (id, nombre, apellido, telefono, email)
         return self.cur.execute(
             "SELECT id, nombre, apellido, telefono, email FROM contactos ORDER BY id DESC"
         ).fetchall()
 
+    # Elimina un contacto por ID.
     def eliminar_contacto(self, contacto_id: int) -> bool:
+        # Ejecuta DELETE para el id seleccionado.
         self.cur.execute("DELETE FROM contactos WHERE id = ?", (contacto_id,))
+        # Confirma el cambio.
         self.conn.commit()
-        return self.cur.rowcount > 0  # True si borró algo
+        # Valida con rowcount que se elimino.
+        return self.cur.rowcount > 0
 
+    # Actualiza un contacto por ID.
     def actualizar_contacto(self, contacto_id: int, contacto: Contacto) -> bool:
-        """
-        Actualiza un registro por ID.
-        Se aplican las mismas validaciones y reglas de duplicados,
-        excluyendo el propio ID (para que permita "re-guardar" igual).
-        """
+        # Valida longitudes.
         self._validar_longitudes(contacto.nombre, contacto.apellido, contacto.telefono, contacto.email)
+        # Valida campos.
         self._validar_campos_obligatorios_y_formato(contacto.nombre, contacto.telefono, contacto.email)
 
+        # Verifica que no sea duplicado sin contar el ID.
         dup, motivo = self._existe_duplicado(
             contacto.nombre, contacto.apellido, contacto.telefono, contacto.email,
             excluir_id=contacto_id
@@ -216,40 +198,42 @@ class GestorDeContactos:
         if dup:
             raise ValueError(motivo)
 
+        # Ejecuta el UPDATE.
         self.cur.execute(
             "UPDATE contactos SET nombre = ?, apellido = ?, telefono = ?, email = ? WHERE id = ?",
             (contacto.nombre.strip(), contacto.apellido.strip(), contacto.telefono.strip(), contacto.email.strip(), contacto_id)
         )
         self.conn.commit()
+        # Valida con rowcount que se actualizo.
         return self.cur.rowcount > 0
 
+    # Cierra la conexión a la BBDD.
     def cerrar_conexion(self):
-        # Cerrar conexión al salir de la app
         try:
             self.conn.close()
         except Exception:
             pass
 
+# |||| Llamado a la interfaz ||||
 
-# ============================================================
-# Punto de entrada (main)
-# Llama a la interfaz Tkinter que movimos a 'interfaz.py'
-# ============================================================
+# Función principal.
 def main():
-    # Creamos la tabla si no existe (idempotente)
+    # Se asegura que la tabla exista.
     crear_tabla_contactos()
 
-    # Import tardío de la UI para no crear dependencias circulares
+    # Importa lo necesario para la interfaz.
     import tkinter as tk
     from interfaz import crear_interfaz
 
-    # Creamos el repositorio y lanzamos la ventana principal
+    # Instancia el repositorio.
     repo = GestorDeContactos(DB_NAME)
     root = tk.Tk()
-    crear_interfaz(root, repo)  # Construye la UI y deja todo listo
+    # Construye la UI.
+    crear_interfaz(root, repo)
     root.mainloop()
-    repo.cerrar_conexion()      # Cerramos la conexión al salir
+    # Se cierra la conexion a la BBDD cuando salimos.
+    repo.cerrar_conexion()
 
-
+# Esto es un seguro cuando usamos modulos
 if __name__ == "__main__":
     main()
